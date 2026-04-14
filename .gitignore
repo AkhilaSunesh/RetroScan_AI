@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ML training data and models (large files)
+ml/data/
+ml/models/
+ml/venv/
+ml/__pycache__/
+*.pyc
+
+# Keep the deployed model in public/ tracked
+!public/models/
