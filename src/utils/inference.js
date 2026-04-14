@@ -4,14 +4,14 @@
  * Loads the MobileNetV3-Small model and runs classification on captured images.
  * Classes: degraded (0), high (1), medium (2)  — alphabetical order from Keras
  *
+ * TF.js is loaded dynamically to avoid blocking initial app render.
+ *
  * Usage:
  *   import { classifyImage, isModelLoaded } from './utils/inference';
  *   const result = await classifyImage(imageElement);
- *   // result = { classification: 'Degraded', confidence: 87, probabilities: { high: 8, medium: 5, degraded: 87 } }
  */
 
-import * as tf from '@tensorflow/tfjs';
-
+let tf = null;
 let model = null;
 let isLoading = false;
 
@@ -24,6 +24,15 @@ const DISPLAY_NAMES = {
   high: 'High',
   medium: 'Medium',
 };
+
+/**
+ * Dynamically import TensorFlow.js (avoids blocking app startup)
+ */
+async function getTF() {
+  if (tf) return tf;
+  tf = await import('@tensorflow/tfjs');
+  return tf;
+}
 
 /**
  * Load the TF.js model (lazy — only on first inference call)
@@ -40,8 +49,9 @@ export async function loadModel(onProgress) {
 
   isLoading = true;
   try {
+    const tfLib = await getTF();
     console.time('Model load');
-    model = await tf.loadLayersModel('/models/model.json', {
+    model = await tfLib.loadLayersModel('/models/model.json', {
       onProgress: (fraction) => {
         if (onProgress) onProgress(fraction);
         console.log(`Loading model: ${(fraction * 100).toFixed(0)}%`);
@@ -69,25 +79,13 @@ export function isModelLoaded() {
  * Preprocess an image element to a tensor for MobileNetV3.
  * Resizes to 224x224, normalizes to [0, 1].
  */
-function preprocessImage(imageSource) {
-  return tf.tidy(() => {
+function preprocessImage(tfLib, imageSource) {
+  return tfLib.tidy(() => {
     // Convert image source to tensor
-    let tensor;
-
-    if (imageSource instanceof HTMLImageElement || imageSource instanceof HTMLVideoElement) {
-      tensor = tf.browser.fromPixels(imageSource);
-    } else if (imageSource instanceof HTMLCanvasElement) {
-      tensor = tf.browser.fromPixels(imageSource);
-    } else if (typeof imageSource === 'string') {
-      // If it's a base64/data URL, we need to draw it to canvas first
-      // This case should be handled by the caller
-      throw new Error('Pass an HTMLImageElement, not a string. Use loadImageFromDataURL() first.');
-    } else {
-      tensor = tf.browser.fromPixels(imageSource);
-    }
+    const tensor = tfLib.browser.fromPixels(imageSource);
 
     // Resize to 224x224
-    const resized = tf.image.resizeBilinear(tensor, [224, 224]);
+    const resized = tfLib.image.resizeBilinear(tensor, [224, 224]);
 
     // Normalize to [0, 1]
     const normalized = resized.div(255.0);
@@ -118,13 +116,14 @@ export function loadImageFromDataURL(dataURL) {
  * @returns {Promise<{classification: string, confidence: number, probabilities: Object, inferenceTime: number}>}
  */
 export async function classifyImage(imageSource) {
-  // Ensure model is loaded
+  // Ensure TF.js and model are loaded
+  const tfLib = await getTF();
   const loadedModel = await loadModel();
 
   const startTime = performance.now();
 
   // Preprocess
-  const inputTensor = preprocessImage(imageSource);
+  const inputTensor = preprocessImage(tfLib, imageSource);
 
   // Run inference
   const prediction = loadedModel.predict(inputTensor);
@@ -161,8 +160,9 @@ export async function classifyImage(imageSource) {
  * Warm up the model with a dummy inference (makes first real inference faster)
  */
 export async function warmupModel() {
+  const tfLib = await getTF();
   const loadedModel = await loadModel();
-  const dummy = tf.zeros([1, 224, 224, 3]);
+  const dummy = tfLib.zeros([1, 224, 224, 3]);
   const warmupResult = loadedModel.predict(dummy);
   warmupResult.dispose();
   dummy.dispose();

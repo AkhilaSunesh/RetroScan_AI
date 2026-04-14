@@ -4,6 +4,16 @@ import { VitePWA } from 'vite-plugin-pwa'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
+  optimizeDeps: {
+    include: [
+      '@tensorflow/tfjs',
+      '@tensorflow/tfjs-core',
+      '@tensorflow/tfjs-backend-cpu',
+      '@tensorflow/tfjs-backend-webgl',
+      '@tensorflow/tfjs-layers',
+      '@tensorflow/tfjs-converter',
+    ],
+  },
   plugins: [
     react(),
     tailwindcss(),
