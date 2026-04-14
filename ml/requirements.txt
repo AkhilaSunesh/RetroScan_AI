@@ -1,8 +1,10 @@
-tensorflow>=2.15
+# TensorFlow + tensorflowjs converter currently require Python <=3.11 due TF 2.15 wheels.
+tensorflow~=2.15.0; python_version < "3.12"
+tensorflow>=2.21.0; python_version >= "3.12"
 opencv-python>=4.8
 pillow>=10.0
 numpy>=1.24
 matplotlib>=3.8
 seaborn>=0.13
 scikit-learn>=1.3
-tensorflowjs>=4.17
+tensorflowjs==4.17.0; python_version < "3.12"

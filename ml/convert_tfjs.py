@@ -22,14 +22,28 @@ def convert_model(model_path, output_dir, quantize=True):
     """Convert Keras model to TF.js graph model format."""
     os.makedirs(output_dir, exist_ok=True)
 
-    cmd = [
-        sys.executable, "-m", "tensorflowjs_converter",
-        "--input_format=keras",
-        "--output_format=tfjs_layers_model",
-    ]
+    # Prefer the console script installed in the active environment. Newer
+    # tensorflowjs packages expose `tensorflowjs_converter` as an executable,
+    # not as a top-level Python module.
+    scripts_dir = os.path.dirname(sys.executable)
+    converter_exe = os.path.join(scripts_dir, "tensorflowjs_converter.exe")
+
+    if os.path.exists(converter_exe):
+        cmd = [
+            converter_exe,
+            "--input_format=keras",
+            "--output_format=tfjs_layers_model",
+        ]
+    else:
+        cmd = [
+            sys.executable, "-m", "tensorflowjs.converters.converter_v2",
+            "--input_format=keras",
+            "--output_format=tfjs_layers_model",
+        ]
 
     if quantize:
-        cmd.append("--quantize_uint8")
+        # Pass an explicit pattern so the next positional arg is not consumed.
+        cmd.append("--quantize_uint8=*")
         print("🔧 Quantizing to uint8 (smaller model, slightly lower precision)")
 
     cmd.extend([model_path, output_dir])
@@ -41,7 +55,15 @@ def convert_model(model_path, output_dir, quantize=True):
     print(f"{'='*60}")
     print(f"Command: {' '.join(cmd)}\n")
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    env = os.environ.copy()
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{script_dir}{os.pathsep}{existing_pythonpath}"
+        if existing_pythonpath else script_dir
+    )
+
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
 
     if result.returncode == 0:
         print("✅ Conversion successful!")
