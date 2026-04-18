@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, MapPin, AlertCircle, Loader2 } from 'lucide-react';
+import { Camera, MapPin, AlertCircle, Loader2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { classifyImage, loadImageFromDataURL, isModelLoaded, loadModel } from '../utils/inference';
 import { detectCondition } from '../utils/conditionDetector';
@@ -7,12 +7,14 @@ import { checkCompliance, estimateRAValue } from '../utils/compliance';
 
 export default function CaptureScreen() {
     const videoRef = useRef(null);
+    const fileInputRef = useRef(null);
     const [location, setLocation] = useState(null);
     const [error, setError] = useState('');
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [modelReady, setModelReady] = useState(false);
     const [modelProgress, setModelProgress] = useState(0);
     const [statusText, setStatusText] = useState('');
+    const [uploadedPreview, setUploadedPreview] = useState(null);
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -65,25 +67,15 @@ export default function CaptureScreen() {
         };
     }, []);
 
-    const captureAndAnalyze = async () => {
-        if (!videoRef.current) return;
-
+    /**
+     * Core analysis pipeline — shared by both camera capture and file upload.
+     * Takes a JPEG data URL and runs: AI classification → condition detection → compliance check → save → navigate.
+     */
+    const analyzeImage = async (imageDataURL) => {
         setIsAnalyzing(true);
-        setStatusText('Capturing image...');
 
         try {
-            // Step 1: Capture frame from video
-            const video = videoRef.current;
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 480;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            // Get image as data URL for storage
-            const imageDataURL = canvas.toDataURL('image/jpeg', 0.85);
-
-            // Step 2: Run AI classification
+            // Step 1: Run AI classification
             setStatusText('Running AI analysis...');
             let aiResult;
             try {
@@ -91,20 +83,25 @@ export default function CaptureScreen() {
                 aiResult = await classifyImage(imgElement);
             } catch (modelErr) {
                 console.error('AI classification failed:', modelErr);
-                // Fallback: use heuristic classification based on image brightness
+                // Fallback: draw to canvas for brightness heuristic
+                const img = await loadImageFromDataURL(imageDataURL);
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth || img.width;
+                canvas.height = img.naturalHeight || img.height;
+                canvas.getContext('2d').drawImage(img, 0, 0);
                 aiResult = fallbackClassification(canvas);
             }
 
-            // Step 3: Detect environmental condition
+            // Step 2: Detect environmental condition
             setStatusText('Analyzing conditions...');
             const imgForCondition = await loadImageFromDataURL(imageDataURL);
             const conditionResult = detectCondition(imgForCondition);
 
-            // Step 4: Check IRC compliance
+            // Step 3: Check IRC compliance
             const complianceResult = checkCompliance(aiResult.classification, conditionResult.condition);
             const estimatedRA = estimateRAValue(aiResult.classification);
 
-            // Step 5: Build scan data object
+            // Step 4: Build scan data object
             const scanData = {
                 id: Date.now(),
                 date: new Date().toLocaleDateString(),
@@ -143,13 +140,13 @@ export default function CaptureScreen() {
                 accuracy: `${aiResult.confidence}%`,
             };
 
-            // Step 6: Save to localStorage
+            // Step 5: Save to localStorage
             const history = JSON.parse(localStorage.getItem('retroscan_history') || '[]');
             history.unshift(scanData);
             localStorage.setItem('retroscan_history', JSON.stringify(history));
             localStorage.setItem('current_scan', JSON.stringify(scanData));
 
-            // Step 7: Navigate to result
+            // Step 6: Navigate to result
             navigate('/result');
 
         } catch (err) {
@@ -157,6 +154,48 @@ export default function CaptureScreen() {
             setError('Analysis failed. Please try again.');
             setIsAnalyzing(false);
         }
+    };
+
+    /** Capture from live camera feed */
+    const captureAndAnalyze = async () => {
+        if (!videoRef.current) return;
+
+        setStatusText('Capturing image...');
+
+        const video = videoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const imageDataURL = canvas.toDataURL('image/jpeg', 0.85);
+        await analyzeImage(imageDataURL);
+    };
+
+    /** Handle file upload */
+    const handleFileUpload = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        // Validate file type
+        if (!file.type.startsWith('image/')) {
+            setError('Please select an image file (JPEG, PNG, etc.)');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            const dataURL = event.target.result;
+            setUploadedPreview(dataURL);
+            setStatusText('Analyzing uploaded image...');
+            await analyzeImage(dataURL);
+            setUploadedPreview(null);
+        };
+        reader.readAsDataURL(file);
+
+        // Reset so the same file can be re-selected
+        e.target.value = '';
     };
 
     /**
@@ -202,9 +241,15 @@ export default function CaptureScreen() {
     return (
         <div className="flex flex-col items-center justify-center p-6 w-full max-w-md mx-auto h-full mt-8">
 
-            {/* Video Feed Container */}
+            {/* Video Feed / Upload Preview Container */}
             <div className="relative w-full aspect-[3/4] bg-surface rounded-2xl overflow-hidden border-2 border-primary/30 shadow-lg shadow-primary/10">
-                {error ? (
+                {uploadedPreview ? (
+                    <img
+                        src={uploadedPreview}
+                        alt="Uploaded preview"
+                        className="w-full h-full object-contain bg-black"
+                    />
+                ) : error ? (
                     <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-600 dark:text-gray-400 p-4 text-center">
                         <AlertCircle className="w-12 h-12 mb-2 text-primary" />
                         <p>{error}</p>
@@ -249,15 +294,37 @@ export default function CaptureScreen() {
                 )}
             </div>
 
-            {/* Capture Button */}
-            <button 
-                onClick={captureAndAnalyze}
-                className="mt-8 bg-primary hover:bg-primary-hover text-white rounded-full p-4 shadow-[0_0_20px_rgba(225,29,72,0.4)] transition-all transform active:scale-95 flex items-center gap-3 font-semibold text-lg w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isAnalyzing}
-            >
-                <Camera className="w-6 h-6" />
-                {isAnalyzing ? statusText : "Analyze Retroreflectivity"}
-            </button>
+            {/* Action Buttons */}
+            <div className="mt-8 flex gap-3 w-full">
+                {/* Capture Button */}
+                <button 
+                    onClick={captureAndAnalyze}
+                    className="flex-1 bg-primary hover:bg-primary-hover text-white rounded-full p-4 shadow-[0_0_20px_rgba(225,29,72,0.4)] transition-all transform active:scale-95 flex items-center gap-2 font-semibold text-base justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={isAnalyzing}
+                >
+                    <Camera className="w-5 h-5" />
+                    {isAnalyzing ? statusText : "Capture"}
+                </button>
+
+                {/* Upload Button */}
+                <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="bg-surface hover:bg-surface/80 text-gray-700 dark:text-gray-200 rounded-full p-4 border-2 border-primary/30 hover:border-primary/60 transition-all transform active:scale-95 flex items-center gap-2 font-semibold text-base justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={isAnalyzing}
+                >
+                    <Upload className="w-5 h-5" />
+                    Upload
+                </button>
+            </div>
+
+            {/* Hidden file input */}
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="hidden"
+            />
 
         </div>
     );

@@ -32,3 +32,9 @@ ml/__pycache__/
 
 # Keep the deployed model in public/ tracked
 !public/models/
+
+# Capacitor Android build artifacts
+android/app/build/
+android/.gradle/
+android/build/
+android/local.properties
